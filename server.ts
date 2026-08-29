@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import dotenv from "dotenv";
 import { 
   generateGroundedAnswer, 
@@ -138,7 +138,7 @@ ${recentHistory ? `السياق السابق:\n${recentHistory}\n\n` : ''}أسئ
     `.trim();
 
     let responseText = "";
-    const modelsToTry = ["gemini-3.7-flash", "gemini-3.5-flash", "gemini-flash-latest"];
+    const modelsToTry = ["gemini-3.7-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
     
     for (const modelName of modelsToTry) {
       try {
@@ -147,6 +147,9 @@ ${recentHistory ? `السياق السابق:\n${recentHistory}\n\n` : ''}أسئ
           contents: prompt,
           config: {
             systemInstruction,
+            thinkingConfig: {
+              thinkingLevel: ThinkingLevel.LOW,
+            },
           },
         });
         if (response.text && response.text.trim().length > 0) {
@@ -214,6 +217,9 @@ ${materialsText || "استخدم المعرفة القياسية للمقرر."}
         model: "gemini-3.7-flash",
         contents: prompt,
         config: {
+          thinkingConfig: {
+            thinkingLevel: ThinkingLevel.LOW,
+          },
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -285,6 +291,9 @@ ${materialsText}
         model: "gemini-3.7-flash",
         contents: prompt,
         config: {
+          thinkingConfig: {
+            thinkingLevel: ThinkingLevel.LOW,
+          },
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -360,6 +369,9 @@ ${materialsText}
         model: "gemini-3.7-flash",
         contents: prompt,
         config: {
+          thinkingConfig: {
+            thinkingLevel: ThinkingLevel.LOW,
+          },
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
