@@ -19,21 +19,16 @@ const PORT = Number(process.env.PORT) || 3000;
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
-// Lazy initializer for GoogleGenAI SDK client with required telemetry User-Agent
+// Lazy initializer for GoogleGenAI SDK client
 let aiClient: GoogleGenAI | null = null;
 function getAI(): GoogleGenAI {
   if (!aiClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || "";
     if (!apiKey) {
       console.warn("WARNING: GEMINI_API_KEY is not set in environment.");
     }
     aiClient = new GoogleGenAI({
-      apiKey: apiKey || "",
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
-      },
+      apiKey: apiKey,
     });
   }
   return aiClient;
@@ -127,8 +122,9 @@ ${recentHistory ? `السياق السابق:\n${recentHistory}\n\n` : ''}أسئ
 
     let responseText = "";
     try {
+      // Primary model: gemini-3.7-flash (or pro if enabled)
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.7-flash",
         contents: prompt,
         config: {
           systemInstruction,
@@ -136,12 +132,31 @@ ${recentHistory ? `السياق السابق:\n${recentHistory}\n\n` : ''}أسئ
       });
       responseText = response.text || "";
     } catch (modelErr: any) {
-      console.warn("Primary 2.5-flash attempt note, trying standard model:", modelErr?.message || modelErr);
-      const fallbackResp = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: `${systemInstruction}\n\n${prompt}`,
-      });
-      responseText = fallbackResp.text || "";
+      console.warn("Primary 3.7-flash attempt note, trying pro/fallback model:", modelErr?.message || modelErr);
+      try {
+        const proResp = await ai.models.generateContent({
+          model: "gemini-3.1-pro-preview",
+          contents: prompt,
+          config: {
+            systemInstruction,
+          },
+        });
+        responseText = proResp.text || "";
+      } catch (proErr: any) {
+        console.warn("Pro model fallback note, trying gemini-flash-latest:", proErr?.message || proErr);
+        try {
+          const fallbackResp = await ai.models.generateContent({
+            model: "gemini-flash-latest",
+            contents: prompt,
+            config: {
+              systemInstruction,
+            },
+          });
+          responseText = fallbackResp.text || "";
+        } catch (fallbackErr: any) {
+          console.error("All AI models failed, using local rule engine:", fallbackErr?.message || fallbackErr);
+        }
+      }
     }
 
     if (responseText && responseText.trim().length > 10) {
