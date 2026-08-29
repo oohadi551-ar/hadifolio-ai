@@ -40,7 +40,7 @@ app.get("/api/health", (_req, res) => {
 });
 
 // Helper for timeout-wrapped AI calls
-async function callAIWithTimeout<T>(promise: Promise<T>, timeoutMs: number = 4000): Promise<T> {
+async function callAIWithTimeout<T>(promise: Promise<T>, timeoutMs: number = 25000): Promise<T> {
   let timer: NodeJS.Timeout;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error("AI call timed out")), timeoutMs);
@@ -67,49 +67,61 @@ app.post("/api/chat", async (req, res) => {
   try {
     const ai = getAI();
 
-    // Smart context filtering: select top 3 most relevant units or compact summary to ensure instantaneous Gemini response (1-2s)
+    // Context preparation: retrieve the most relevant units from the course materials
     let materialsContext = "";
     if (materials && materials.length > 0) {
       const units = extractUnitsFromMaterials(materials);
       if (units.length > 0) {
-        // Score units by relevance to query keywords to only send the most relevant 2-3 units
+        // Score units by relevance to query keywords
         const queryTerms = query.toLowerCase().split(/\s+/).filter((t: string) => t.length > 2);
         const scoredUnits = units.map(u => {
           let score = 0;
           const text = (u.title + " " + u.content).toLowerCase();
           for (const term of queryTerms) {
-            if (text.includes(term)) score += 1;
+            if (text.includes(term)) score += 2;
           }
           return { unit: u, score };
         });
         scoredUnits.sort((a, b) => b.score - a.score);
         
-        const topUnits = scoredUnits.slice(0, 3).map(s => s.unit);
-        materialsContext = topUnits
-          .map((u) => `### ${u.fullHeading || u.title}\n${(u.content || "").slice(0, 1500)}`)
+        // Take top 6 units to provide comprehensive yet focused context
+        const topUnits = scoredUnits.filter(s => s.score > 0).slice(0, 6).map(s => s.unit);
+        const unitsToUse = topUnits.length > 0 ? topUnits : units.slice(0, 5);
+
+        materialsContext = unitsToUse
+          .map((u) => `### ${u.fullHeading || u.title} (المصدر: ${u.sourceTitle || courseTitle})\n${(u.content || "").slice(0, 3500)}`)
           .join("\n\n");
       } else {
         materialsContext = materials
-          .slice(0, 2)
+          .slice(0, 4)
           .map((m: any, index: number) => {
             const title = m.title || m.fileName || `ملف ${index + 1}`;
-            const content = (m.content || m.summary || "").slice(0, 1500);
+            const content = (m.content || m.summary || "").slice(0, 3500);
             return `=== المرجع [${index + 1}]: "${title}" ===\n${content}`;
           })
           .join("\n\n");
       }
     } else {
-      materialsContext = "مقرر قانوني معتمد. أجب وفق الأصول والأنظمة والاتفاقيات القانونية المعتمدة.";
+      materialsContext = "مقرر قانوني معتمد. أجب وفق الأصول والأنظمة والاتفاقيات القانونية واللوائح المعتمدة.";
     }
 
     const systemInstruction = `
-أنت المساعد الأكاديمي الذكي لمقرر "${courseTitle}". أجب مباشرة وبسرعة فائقة وبدون أي مقدمات أو حشو.
-قواعد الإجابة:
-1. الأسئلة المرقمة: أجب فوراً على كل رقم.
-2. صح أو خطأ: اكتب (❌ خطأ مع التصويب في سطر) أو (✅ صح مع التعليل في سطر).
-3. اختيار من متعدد: اكتب الخيار الصحيح وتعليلاً مركزاً.
+أنت المساعد الأكاديمي والمستشار القانوني الخبير لمقرر "${courseTitle}" (${courseCode || ''}).
+أنت مكلف بتقديم إجابات موثوقة، دقيقة، ومؤكدة بنسبة 100% ومستندة حرفياً إلى محتوى المذكرات والأنظمة القانونية المعتمدة.
 
-المحتوى المعتمد ذو الصلة:
+قواعد الإجابة الصارمة:
+1. **الدقة واليقين**: التزم بنصوص المذكرات والأنظمة المرفقة، ولا تخمن أبداً.
+2. **الأسئلة المتعددة والقوائم**: أجب على كل سؤال وفقرة بالترتيب المرقم (1. ، 2. ، 3. ...) حتى آخر سؤال.
+3. **أسئلة (صح أو خطأ)**:
+   - في حال الخطأ: \`1. ❌ **خطأ** — التصويب: [التصحيح الدقيق والمباشر في سطر واحد وفق المرجع]\`
+   - في حال الصحة: \`2. ✅ **صح** — السند: [التعليل أو السند النظامي الدقيق في سطر واحد]\`
+4. **أسئلة الاختيار من متعدد**:
+   - \`1. 🎯 **الخيار الصحيح: (أ/ب/ج/د) [نص الخيار كاملاً]** — [التعليل أو السند من المذكرة]\`
+5. **المسائل والوقائع القانونية**:
+   - التكييف النظامي ➔ الحكم/النتيجة ➔ السند النظامي أو الفقهي من المقرر.
+6. **الأسئلة المقالية أو الشرح**: قدم إجابة منظمة وواضحة بنقاط محددة دون إسهاب أو حشو زائد.
+
+المحتوى والمذكرات المعتمدة ذات الصلة:
 ${materialsContext}
     `.trim();
 
@@ -121,11 +133,13 @@ ${materialsContext}
     const prompt = `
 ${recentHistory ? `السياق السابق:\n${recentHistory}\n\n` : ''}أسئلة الطالب:
 "${query}"
+
+المطلوب: أجب على جميع الأسئلة المطروحة أعلاه بالترتيب بدقة ويقين وحسم مباشر وفق القواعد المقررة.
     `.trim();
 
     let responseText = "";
     try {
-      // Use gemini-2.5-flash with timeout for guaranteed 1-2s response
+      // Primary model: gemini-2.5-flash for balanced speed & accuracy
       const response = await callAIWithTimeout(
         ai.models.generateContent({
           model: "gemini-2.5-flash",
@@ -134,11 +148,11 @@ ${recentHistory ? `السياق السابق:\n${recentHistory}\n\n` : ''}أسئ
             systemInstruction,
           },
         }),
-        6000
+        20000
       );
       responseText = response.text || "";
     } catch (modelErr: any) {
-      console.warn("Fast AI note, trying quick fallback:", modelErr?.message || modelErr);
+      console.warn("Primary model note, trying 3.7-flash fallback:", modelErr?.message || modelErr);
       try {
         const fallbackResp = await callAIWithTimeout(
           ai.models.generateContent({
@@ -148,11 +162,11 @@ ${recentHistory ? `السياق السابق:\n${recentHistory}\n\n` : ''}أسئ
               systemInstruction,
             },
           }),
-          6000
+          20000
         );
         responseText = fallbackResp.text || "";
       } catch (fallbackErr: any) {
-        console.error("AI timeout/error, using instant grounded local engine:", fallbackErr?.message || fallbackErr);
+        console.error("AI service issue, falling back to local engine:", fallbackErr?.message || fallbackErr);
       }
     }
 
