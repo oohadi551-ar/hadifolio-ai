@@ -139,30 +139,30 @@ ${recentHistory ? `السياق السابق:\n${recentHistory}\n\n` : ''}أسئ
 
     let responseText = "";
     try {
-      // Primary model: gemini-2.5-flash for balanced speed & accuracy
+      // Primary model: gemini-3.7-flash
       const response = await callAIWithTimeout(
         ai.models.generateContent({
-          model: "gemini-2.5-flash",
+          model: "gemini-3.7-flash",
           contents: prompt,
           config: {
             systemInstruction,
           },
         }),
-        20000
+        25000
       );
       responseText = response.text || "";
     } catch (modelErr: any) {
-      console.warn("Primary model note, trying 3.7-flash fallback:", modelErr?.message || modelErr);
+      console.warn("Primary 3.7-flash note, trying gemini-2.0-flash fallback:", modelErr?.message || modelErr);
       try {
         const fallbackResp = await callAIWithTimeout(
           ai.models.generateContent({
-            model: "gemini-3.7-flash",
+            model: "gemini-2.0-flash",
             contents: prompt,
             config: {
               systemInstruction,
             },
           }),
-          20000
+          25000
         );
         responseText = fallbackResp.text || "";
       } catch (fallbackErr: any) {
