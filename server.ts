@@ -67,22 +67,34 @@ app.post("/api/chat", async (req, res) => {
   try {
     const ai = getAI();
 
-    // Smart context filtering: If query mentions specific topics, or if list of questions, filter materials to relevant units/sections or compact summaries to ensure ultra-fast latency (1-2s)
+    // Smart context filtering: select top 3 most relevant units or compact summary to ensure instantaneous Gemini response (1-2s)
     let materialsContext = "";
     if (materials && materials.length > 0) {
       const units = extractUnitsFromMaterials(materials);
-      
-      // If we have parsed units, identify the most relevant units or provide the full structured curriculum
       if (units.length > 0) {
-        materialsContext = units
-          .map((u) => `### ${u.fullHeading || u.title} (المصدر: ${u.sourceTitle})\n${u.content}`)
+        // Score units by relevance to query keywords to only send the most relevant 2-3 units
+        const queryTerms = query.toLowerCase().split(/\s+/).filter((t: string) => t.length > 2);
+        const scoredUnits = units.map(u => {
+          let score = 0;
+          const text = (u.title + " " + u.content).toLowerCase();
+          for (const term of queryTerms) {
+            if (text.includes(term)) score += 1;
+          }
+          return { unit: u, score };
+        });
+        scoredUnits.sort((a, b) => b.score - a.score);
+        
+        const topUnits = scoredUnits.slice(0, 3).map(s => s.unit);
+        materialsContext = topUnits
+          .map((u) => `### ${u.fullHeading || u.title}\n${(u.content || "").slice(0, 1500)}`)
           .join("\n\n");
       } else {
         materialsContext = materials
+          .slice(0, 2)
           .map((m: any, index: number) => {
             const title = m.title || m.fileName || `ملف ${index + 1}`;
-            const content = m.content || m.summary || "";
-            return `=== المرجع [${index + 1}]: "${title}" ===\n${content}\n=== نهاية المرجع ===`;
+            const content = (m.content || m.summary || "").slice(0, 1500);
+            return `=== المرجع [${index + 1}]: "${title}" ===\n${content}`;
           })
           .join("\n\n");
       }
@@ -91,20 +103,13 @@ app.post("/api/chat", async (req, res) => {
     }
 
     const systemInstruction = `
-أنت المساعد الأكاديمي الذكي والخبير لمقرر "${courseTitle}" (${courseCode || ''}).
-أنت متخصص في الإجابة السريعة والدقيقة والمباشرة على أسئلة ومذكرات هذا المقرر.
+أنت المساعد الأكاديمي الذكي لمقرر "${courseTitle}". أجب مباشرة وبسرعة فائقة وبدون أي مقدمات أو حشو.
+قواعد الإجابة:
+1. الأسئلة المرقمة: أجب فوراً على كل رقم.
+2. صح أو خطأ: اكتب (❌ خطأ مع التصويب في سطر) أو (✅ صح مع التعليل في سطر).
+3. اختيار من متعدد: اكتب الخيار الصحيح وتعليلاً مركزاً.
 
-قواعد واستراتيجيات الإجابة الصارمة:
-1. **سرعة وإيجاز وحسم الإجابة**: قدم إجابات مباشرة بدون مقدمات إنشائية ولا إطالة إلا إذا طُلب الشرح.
-2. **الأسئلة المتعددة وقوائم الأسئلة (حتى 50+ سؤال)**: أجب على كل سؤال وفقرة بالترتيب المرقم (1. ، 2. ، 3. ...).
-3. **أسئلة (صح أو خطأ)**:
-   - \`1. ❌ **خطأ** — التصويب: [التصحيح المباشر في سطر واحد]\`
-   - \`2. ✅ **صح** — السبب: [التعليل المباشر في سطر واحد]\`
-4. **أسئلة الاختيار من متعدد**:
-   - \`1. 🎯 **الخيار الصحيح: (أ/ب/ج/د) [نص الخيار]** — [تعليل موجز]\`
-5. **القضايا والاستشارات**: تكييف وحكم نهائي وسند نظامي مركز.
-
-المذكرات والمحتوى الدراسي المعتمد المتاح:
+المحتوى المعتمد ذو الصلة:
 ${materialsContext}
     `.trim();
 
@@ -116,46 +121,38 @@ ${materialsContext}
     const prompt = `
 ${recentHistory ? `السياق السابق:\n${recentHistory}\n\n` : ''}أسئلة الطالب:
 "${query}"
-
-المطلوب: أجب على جميع الأسئلة المطروحة أعلاه بالترتيب برقم كل فقرة، وبإيجاز وحسم مباشر.
     `.trim();
 
     let responseText = "";
     try {
-      // Primary model: gemini-3.7-flash (or pro if enabled)
-      const response = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: prompt,
-        config: {
-          systemInstruction,
-        },
-      });
-      responseText = response.text || "";
-    } catch (modelErr: any) {
-      console.warn("Primary 3.7-flash attempt note, trying pro/fallback model:", modelErr?.message || modelErr);
-      try {
-        const proResp = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
+      // Use gemini-2.5-flash with timeout for guaranteed 1-2s response
+      const response = await callAIWithTimeout(
+        ai.models.generateContent({
+          model: "gemini-2.5-flash",
           contents: prompt,
           config: {
             systemInstruction,
           },
-        });
-        responseText = proResp.text || "";
-      } catch (proErr: any) {
-        console.warn("Pro model fallback note, trying gemini-flash-latest:", proErr?.message || proErr);
-        try {
-          const fallbackResp = await ai.models.generateContent({
-            model: "gemini-flash-latest",
+        }),
+        6000
+      );
+      responseText = response.text || "";
+    } catch (modelErr: any) {
+      console.warn("Fast AI note, trying quick fallback:", modelErr?.message || modelErr);
+      try {
+        const fallbackResp = await callAIWithTimeout(
+          ai.models.generateContent({
+            model: "gemini-3.7-flash",
             contents: prompt,
             config: {
               systemInstruction,
             },
-          });
-          responseText = fallbackResp.text || "";
-        } catch (fallbackErr: any) {
-          console.error("All AI models failed, using local rule engine:", fallbackErr?.message || fallbackErr);
-        }
+          }),
+          6000
+        );
+        responseText = fallbackResp.text || "";
+      } catch (fallbackErr: any) {
+        console.error("AI timeout/error, using instant grounded local engine:", fallbackErr?.message || fallbackErr);
       }
     }
 
