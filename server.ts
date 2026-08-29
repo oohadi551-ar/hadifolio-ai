@@ -138,35 +138,23 @@ ${recentHistory ? `السياق السابق:\n${recentHistory}\n\n` : ''}أسئ
     `.trim();
 
     let responseText = "";
-    try {
-      // Primary model: gemini-3.7-flash
-      const response = await callAIWithTimeout(
-        ai.models.generateContent({
-          model: "gemini-3.7-flash",
+    const modelsToTry = ["gemini-3.7-flash", "gemini-3.5-flash", "gemini-flash-latest"];
+    
+    for (const modelName of modelsToTry) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
           contents: prompt,
           config: {
             systemInstruction,
           },
-        }),
-        25000
-      );
-      responseText = response.text || "";
-    } catch (modelErr: any) {
-      console.warn("Primary 3.7-flash note, trying gemini-2.0-flash fallback:", modelErr?.message || modelErr);
-      try {
-        const fallbackResp = await callAIWithTimeout(
-          ai.models.generateContent({
-            model: "gemini-2.0-flash",
-            contents: prompt,
-            config: {
-              systemInstruction,
-            },
-          }),
-          25000
-        );
-        responseText = fallbackResp.text || "";
-      } catch (fallbackErr: any) {
-        console.error("AI service issue, falling back to local engine:", fallbackErr?.message || fallbackErr);
+        });
+        if (response.text && response.text.trim().length > 0) {
+          responseText = response.text.trim();
+          break;
+        }
+      } catch (err: any) {
+        console.warn(`Model ${modelName} attempt note:`, err?.message || err);
       }
     }
 
