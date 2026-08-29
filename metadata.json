@@ -1,0 +1,6 @@
+{
+  "name": "هادي المساعد الشخصي",
+  "description": "المساعد الشخصي والأكاديمي الذكي المعتمد لمقررات القانون والمذكرات الرسمية والاختبارات التفاعلية",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
